@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from scipy.special import logit
 import cPickle
 from scipy.misc import imresize
+from scipy.spatial.distance import pdist, squareform
 
 
 def zeros(shape):
@@ -24,16 +25,22 @@ def logdet_tf(S):
     return ld
 
 
+def logdet_lower(L):
+    ld = tf.reduce_sum(tf.log(tf.abs(tf.diag_part(L))))
+    return ld
+
+
 def lower_tf(X):
     # Better way to do this??
     return tf.matrix_band_part(X, -1, 0) - tf.matrix_band_part(X, 0, 0)
 
 
 def learn_gauss_test(train_x, valid_x, batch_size=20):
-    sigma_list = tf.Variable((10.0,), trainable=False, dtype="float")
+    sigma_list_obs = np.median(squareform(squareform(pdist(train_x)))) ** 2
+    sigma_list_obs = tf.Variable((sigma_list_obs,),
+                                 trainable=False, dtype="float")
+    sigma_list_latent = tf.Variable((10.0,), trainable=False, dtype="float")
 
-    # mu = np.mean(train_x, axis=0)
-    # S = np.cov(train_x, rowvar=False, bias=True)
     num_examples, D = train_x.shape
     assert(valid_x.shape == train_x.shape)  # Assume same for now
 
@@ -42,33 +49,34 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
 
     # Better to initialize so too small??
     W_dummy = normal((D, D), 0.5 / D)
-    W_tf = lower_tf(W_dummy) + tf.eye(D)
-    #W_tf = normal((D, D), 0.5 / D)
+    # W_tf = lower_tf(W_dummy) + tf.eye(D)
+    W_tf = tf.matrix_band_part(W_dummy, -1, 0)
     b_tf = zeros((D,))
     x = tf.placeholder(dtype="float", shape=[batch_size, D])
 
     samples = tf.matmul(x, W_tf) + b_tf
 
     # cost of the network, and optimizer for the cost
-    cost = tf.reduce_mean(dt.mmd_marg(samples, sigma_list, unbiased=True))
+    cost = tf.reduce_mean(dt.mmd_marg(samples, sigma_list_latent, unbiased=True))
+    # Warning: we must change this is W is no longer lower!
+    ldw = logdet_lower(W_tf)
+    # cost = tf.reduce_mean(dt.nll(samples, ldw))
+
     optimizer = tf.train.AdamOptimizer().minimize(cost)
 
     samples_full = tf.matmul(train_x_tf, W_tf) + b_tf
-    data_log_det_jac = tf.log(tf.abs(tf.matrix_determinant(W_tf)))
+
     gen_latent = normal((D, D), 1.0)
-
-    # TODO look into using solve instead
     gen_obs = tf.matmul(gen_latent - b_tf, tf.matrix_inverse(W_tf))
-    gen_chk = tf.matmul(gen_obs, W_tf) + b_tf
-    gen_err = tf.reduce_max(tf.abs(gen_latent - gen_chk))
-
-    metric_train = dt.run_all_metrics(train_x_tf, samples_full, data_log_det_jac,
+    #gen_chk = tf.matmul(gen_obs, W_tf) + b_tf
+    #gen_err = tf.reduce_max(tf.abs(gen_latent - gen_chk))
+    metric_train = dt.run_all_metrics(train_x_tf, samples_full, ldw,
                                       gen_obs, gen_latent,
-                                      sigma_list, sigma_list)
+                                      sigma_list_obs, sigma_list_latent)
     samples_valid = tf.matmul(valid_x_tf, W_tf) + b_tf
-    metric_valid = dt.run_all_metrics(valid_x_tf, samples_valid, data_log_det_jac,
+    metric_valid = dt.run_all_metrics(valid_x_tf, samples_valid, ldw,
                                       gen_obs, gen_latent,
-                                      sigma_list, sigma_list)
+                                      sigma_list_obs, sigma_list_latent)
 
     # initalize all the variables in the model
     init = tf.initialize_all_variables()
@@ -79,7 +87,7 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
     b0 = b_tf.eval(session=sess)
     X0 = np.dot(train_x, W0) + b0[None, :]
 
-    num_iterations = 100000
+    num_iterations = 5000
     iteration_break = 100
     train_hist = []
     valid_hist = []
@@ -87,7 +95,7 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
                       for k, v in metric_train.iteritems()})
     valid_hist.append({k: np.mean(v.eval(session=sess))
                       for k, v in metric_valid.iteritems()})
-    for i in range(num_iterations):
+    for i in xrange(num_iterations):
         batch_indices = np.random.choice(num_examples, size=batch_size,
                                          replace=False)
         batch_x = train_x[batch_indices]
@@ -97,15 +105,14 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
             curr_cost = sess.run(cost, feed_dict={x: batch_x})
             print 'Cost at iteration ' + str(i+1) + ': ' + str(curr_cost)
 
-            print gen_err.eval(session=sess)
-
+            # Re-calculate with np since TF sometimese has trouble here
             logdet_W = np.linalg.slogdet(W_tf.eval(session=sess))[1]
             train_hist.append({k: np.mean(v.eval(session=sess))
                                for k, v in metric_train.iteritems()})
-            train_hist[-1]['nll_cmp'] = logdet_W
+            train_hist[-1]['nll_cmp'] = -logdet_W
             valid_hist.append({k: np.mean(v.eval(session=sess))
                                for k, v in metric_valid.iteritems()})
-            valid_hist[-1]['nll_cmp'] = logdet_W
+            valid_hist[-1]['nll_cmp'] = -logdet_W
     
         # optimize the network
         sess.run(optimizer, feed_dict={x: batch_x})

@@ -8,6 +8,12 @@ import div_tools_np as np_test
 # TODO also test that jac can change per data point
 
 
+def squared_dist(A):
+    expanded_a = tf.expand_dims(A, 1)
+    expanded_b = tf.expand_dims(A, 0)
+    distances = tf.reduce_sum(tf.squared_difference(expanded_a, expanded_b), 2)
+    return distances
+
 # Neg. Log Likelihood (KL)
 
 
@@ -70,20 +76,23 @@ def mmd_marg_fit(X, sigma_list):
     return fit
 
 
-def mmd_marg_complexity(X, sigma_list, unbiased=True):
+def mmd_marg_complexity(X, sigma_list, unbiased=True, low_mem=True):
     N, D = X.get_shape().as_list()
     n_sigma, = sigma_list.get_shape().as_list()
 
-    # dot product between all combinations of rows in 'X'
-    XX = tf.matmul(X, tf.transpose(X))
+    if low_mem:
+        # dot product between all combinations of rows in 'X'
+        XX = tf.matmul(X, tf.transpose(X))
 
-    # dot product of rows with themselves
-    X2 = tf.reduce_sum(X * X, 1, keep_dims=True)
+        # dot product of rows with themselves
+        X2 = tf.reduce_sum(X * X, 1, keep_dims=True)
 
-    # exponent entries of the RBF kernel (without the sigma) for each
-    # combination of the rows in 'X'
-    # -0.5 * (x^Tx - 2*x^Ty + y^Ty)
-    exponent = XX - 0.5 * X2 - 0.5 * tf.transpose(X2)
+        # exponent entries of the RBF kernel (without the sigma) for each
+        # combination of the rows in 'X'
+        # -0.5 * (x^Tx - 2*x^Ty + y^Ty)
+        exponent = XX - 0.5 * X2 - 0.5 * tf.transpose(X2)
+    else:
+        exponent = -0.5 * squared_dist(X)
 
     penalty = 0.0
     for ii in range(n_sigma):
@@ -120,6 +129,7 @@ def mmd2_fit(X, Y, sigma_list):
     assert(Y.get_shape().as_list()[1] == D)
     n_sigma, = sigma_list.get_shape().as_list()
 
+    # TODO add version with squared dist here too
     YX = tf.matmul(Y, tf.transpose(X))
     X2 = tf.reduce_sum(X * X, 1, keep_dims=True)
     Y2 = tf.reduce_sum(Y * Y, 1, keep_dims=True)
@@ -156,11 +166,13 @@ def run_all_metrics(data_obs, data_latent, data_log_det_jac,
 
     # This metric should be almost the same as mmd marg since mmd marg is just
     # this metric after analytically marginalizing out gen_latent.
-    metrics['mmd2l_fit'] = mmd2_fit(gen_latent, data_latent, sigma_list_latent)
-    metrics['mmd2l_cmp'] = mmd2_complexity(data_latent, sigma_list_latent)
+    if gen_latent is not None:
+        metrics['mmd2l_fit'] = mmd2_fit(gen_latent, data_latent, sigma_list_latent)
+        metrics['mmd2l_cmp'] = mmd2_complexity(data_latent, sigma_list_latent)
 
-    metrics['mmd2o_fit'] = mmd2_fit(data_obs, gen_obs, sigma_list_obs)
-    metrics['mmd2o_cmp'] = mmd2_complexity(gen_obs, sigma_list_obs)
+    if gen_obs is not None:
+        metrics['mmd2o_fit'] = mmd2_fit(data_obs, gen_obs, sigma_list_obs)
+        metrics['mmd2o_cmp'] = mmd2_complexity(gen_obs, sigma_list_obs)
     return metrics
 
 # Testing
@@ -221,7 +233,9 @@ def run_tests(runs=100, n_sample=500):
                                   sigma_list.eval(session=sess))
         err_curr = max(err_curr, max_err(Y.eval(session=sess), Y2))
 
-        Y = mmd_marg_complexity(X, sigma_list, unbiased=unbiased)
+        low_mem = np.random.rand() <= 0.5
+        Y = mmd_marg_complexity(X, sigma_list, unbiased=unbiased,
+                                low_mem=low_mem)
         Y2 = np_test.mmd_marg_complexity(X.eval(session=sess),
                                          sigma_list.eval(session=sess),
                                          unbiased=unbiased)
