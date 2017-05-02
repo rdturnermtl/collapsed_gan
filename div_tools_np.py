@@ -142,32 +142,47 @@ def mmd2(X, Y, sigma_list, unbiased=True):
     assert(unbiased or np.mean(mmd2_) >= 0.0)
     return mmd2_
 
+# Statistical testing based on MMD Marg statistic
 
-def mmd_ref_table(N, D, mc_samples, sigma_list):
-    mmd_order_stats = np.zeros((len(sigma_list), mc_samples))
+
+def mmd_marg_ref_table(N, D, mc_samples, sigma_list, make_order_stats=False):
+    ref_tbl = np.zeros((len(sigma_list), mc_samples))
     for ii in xrange(mc_samples):
         X = np.random.randn(N, D)
         for ss_idx, sigma in enumerate(sigma_list):
             # This could be made more efficient by re-using distance matrix
-            mmd_order_stats[ss_idx, ii] = np.mean(mmd_marg(X, (sigma,)))
-    mmd_order_stats.sort(axis=1)  # Now sort the rows
-    return mmd_order_stats
+            ref_tbl[ss_idx, ii] = np.mean(mmd_marg(X, (sigma,)))
+    if make_order_stats:
+        ref_tbl.sort(axis=1)  # Now sort the rows
+    return ref_tbl
 
 
-def mmd_power_estimate(X, mmd_order_stats, sigma_list):
+def mmd_marg_pvalue(X, ref_tbl, sigma_list):
+    '''Computes the p-value for each element in sigma list. Can be used for
+    parameter selection.'''
     mmd_stat = np.zeros((len(sigma_list), 1))
     for ss_idx, sigma in enumerate(sigma_list):
         # This could be made more efficient by re-using distance matrix
         mmd_stat[ss_idx, 0] = np.mean(mmd_marg(X, (sigma,)))
-    pval = np.mean(mmd_stat <= mmd_order_stats, axis=1)
+    pval = np.mean(mmd_stat <= ref_tbl, axis=1)
     return pval
 
 
-def mmd_power_batch(X, N, subsets, mmd_order_stats, sigma_list):
-    pval = np.zeros((len(sigma_list), subsets))
-    for rr in xrange(subsets):
+def mmd_marg_pvalue_batches(X, N, n_batches, ref_tbl, sigma_list):
+    pval = np.zeros((len(sigma_list), n_batches))
+    for rr in xrange(n_batches):
         X_curr = X[np.random.choice(X.shape[0], N, replace=False), :]
-        pval[:, rr] = mmd_power_estimate(X_curr, mmd_order_stats, sigma_list)
+        pval[:, rr] = mmd_marg_pvalue(X_curr, ref_tbl, sigma_list)
+    return pval
+
+
+def mmd_marg_mix_pvalue_batches(X, N, n_batches, ref_vec, sigma_list):
+    assert(ref_vec.ndim == 1)
+    pval = np.zeros((n_batches,))
+    for rr in xrange(n_batches):
+        X_curr = X[np.random.choice(X.shape[0], N, replace=False), :]
+        mmd_stat = np.mean(mmd_marg(X_curr, sigma_list))
+        pval[rr] = np.mean(mmd_stat <= ref_vec)
     return pval
 
 # Testing
