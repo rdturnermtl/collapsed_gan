@@ -3,6 +3,7 @@ import tensorflow as tf
 import pandas as pd
 
 import div_tools as dt
+import div_tools_np as dtnp
 
 import matplotlib.pyplot as plt
 from scipy.special import logit
@@ -36,10 +37,11 @@ def lower_tf(X):
 
 
 def learn_gauss_test(train_x, valid_x, batch_size=20):
-    sigma_list_obs = np.median(squareform(squareform(pdist(train_x)))) ** 2
-    sigma_list_obs = tf.Variable((sigma_list_obs,),
-                                 trainable=False, dtype="float")
+    #sigma_list_obs = np.median(squareform(squareform(pdist(train_x)))) ** 2
+    #sigma_list_obs = tf.Variable((sigma_list_obs,),
+    #                             trainable=False, dtype="float")
     sigma_list_latent = tf.Variable((10.0,), trainable=False, dtype="float")
+    sigma_list_obs = tf.Variable((100.0,), trainable=False, dtype="float")
 
     num_examples, D = train_x.shape
     assert(valid_x.shape == train_x.shape)  # Assume same for now
@@ -64,7 +66,9 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
 
     optimizer = tf.train.AdamOptimizer().minimize(cost)
 
-    samples_full = tf.matmul(train_x_tf, W_tf) + b_tf
+    #samples_full = tf.matmul(train_x_tf, W_tf) + b_tf
+    samples_full = samples  # Just use subset for high mem case
+    samples_valid = tf.matmul(valid_x_tf[:100, :], W_tf) + b_tf
 
     gen_latent = normal((D, D), 1.0)
     gen_obs = tf.matmul(gen_latent - b_tf, tf.matrix_inverse(W_tf))
@@ -73,7 +77,6 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
     metric_train = dt.run_all_metrics(train_x_tf, samples_full, ldw,
                                       gen_obs, gen_latent,
                                       sigma_list_obs, sigma_list_latent)
-    samples_valid = tf.matmul(valid_x_tf, W_tf) + b_tf
     metric_valid = dt.run_all_metrics(valid_x_tf, samples_valid, ldw,
                                       gen_obs, gen_latent,
                                       sigma_list_obs, sigma_list_latent)
@@ -91,10 +94,6 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
     iteration_break = 100
     train_hist = []
     valid_hist = []
-    train_hist.append({k: np.mean(v.eval(session=sess))
-                      for k, v in metric_train.iteritems()})
-    valid_hist.append({k: np.mean(v.eval(session=sess))
-                      for k, v in metric_valid.iteritems()})
     for i in xrange(num_iterations):
         batch_indices = np.random.choice(num_examples, size=batch_size,
                                          replace=False)
@@ -107,7 +106,7 @@ def learn_gauss_test(train_x, valid_x, batch_size=20):
 
             # Re-calculate with np since TF sometimese has trouble here
             logdet_W = np.linalg.slogdet(W_tf.eval(session=sess))[1]
-            train_hist.append({k: np.mean(v.eval(session=sess))
+            train_hist.append({k: np.mean(v.eval(session=sess, feed_dict={x: batch_x}))
                                for k, v in metric_train.iteritems()})
             train_hist[-1]['nll_cmp'] = -logdet_W
             valid_hist.append({k: np.mean(v.eval(session=sess))

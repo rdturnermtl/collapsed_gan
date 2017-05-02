@@ -76,7 +76,7 @@ def mmd_marg_fit(X, sigma_list):
     return fit
 
 
-def mmd_marg_complexity(X, sigma_list, unbiased=True, low_mem=True):
+def mmd_marg_complexity(X, sigma_list, unbiased=True, low_mem=False):
     N, D = X.get_shape().as_list()
     n_sigma, = sigma_list.get_shape().as_list()
 
@@ -123,17 +123,22 @@ def mmd2_const(X, sigma_list, unbiased=True):
     return C
 
 
-def mmd2_fit(X, Y, sigma_list):
+def mmd2_fit(X, Y, sigma_list, low_mem=False):
     M, D = X.get_shape().as_list()
     N, _ = Y.get_shape().as_list()
     assert(Y.get_shape().as_list()[1] == D)
     n_sigma, = sigma_list.get_shape().as_list()
 
-    # TODO add version with squared dist here too
-    YX = tf.matmul(Y, tf.transpose(X))
-    X2 = tf.reduce_sum(X * X, 1, keep_dims=True)
-    Y2 = tf.reduce_sum(Y * Y, 1, keep_dims=True)
-    exponent = YX - 0.5 * Y2 - 0.5 * tf.transpose(X2)
+    if low_mem:
+        YX = tf.matmul(Y, tf.transpose(X))
+        X2 = tf.reduce_sum(X * X, 1, keep_dims=True)
+        Y2 = tf.reduce_sum(Y * Y, 1, keep_dims=True)
+        exponent = YX - 0.5 * Y2 - 0.5 * tf.transpose(X2)
+    else:
+        expanded_a = tf.expand_dims(Y, 1)
+        expanded_b = tf.expand_dims(X, 0)
+        distances = tf.reduce_sum(tf.squared_difference(expanded_a, expanded_b), 2)
+        exponent = -0.5 * distances
 
     fit = 0.0
     for ii in range(n_sigma):
@@ -254,7 +259,8 @@ def run_tests(runs=100, n_sample=500):
                                 unbiased=unbiased)
         err_curr = max(err_curr, max_err(Y.eval(session=sess), Y2))
 
-        Y = mmd2_fit(X, Z, sigma_list)
+        low_mem = np.random.rand() <= 0.5
+        Y = mmd2_fit(X, Z, sigma_list, low_mem=low_mem)
         Y2 = np_test.mmd2_fit(X.eval(session=sess), Z.eval(session=sess),
                               sigma_list.eval(session=sess))
         err_curr = max(err_curr, max_err(Y.eval(session=sess), Y2))
