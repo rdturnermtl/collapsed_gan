@@ -1099,7 +1099,8 @@ class RealNVP(object):
         cost = -(prior_ll + log_diff)
 
         z_out_as_mat = tf.reshape(z_out, [-1, numpy.prod(final_shape)])
-        sigma_list_latent = tf.Variable((10.0,), trainable=False, dtype="float")
+        sigma_list_latent = tf.Variable((1.0, 10.0, 100.0, 1000.0),
+                                        trainable=False, dtype="float")
         gen_obs = None
         gen_latent = None
         metrics = dt.run_all_metrics(logit_x_in, z_out_as_mat, log_diff,
