@@ -1,8 +1,12 @@
+# Ryan Turner (turnerry@iro.umontreal.ca)
 import numpy as np
 import tensorflow as tf
 
 # For test only
 import div_tools_np as np_test
+
+# TODO also test that jac can change per data point
+
 
 # Neg. Log Likelihood (KL)
 
@@ -55,12 +59,12 @@ def mmd_marg_fit(X, sigma_list):
     n_sigma, = sigma_list.get_shape().as_list()
 
     # dot product of rows with themselves
-    neg_gauss_fit_term = -0.5 * tf.reduce_sum(X * X, axis=1)
+    neg_g_fit_term = -0.5 * tf.reduce_sum(X * X, axis=1)
 
     fit = 0.0
     for ii in range(n_sigma):
         Z = -2.0 * ((sigma_list[ii] / (sigma_list[ii] + 1.0)) ** (D / 2.0))
-        kernel_val = tf.exp((1.0 / (sigma_list[ii] + 1.0)) * neg_gauss_fit_term)
+        kernel_val = tf.exp((1.0 / (sigma_list[ii] + 1.0)) * neg_g_fit_term)
         fit += Z * kernel_val
     assert(fit.get_shape().as_list() == [N])
     return fit
@@ -85,7 +89,7 @@ def mmd_marg_complexity(X, sigma_list, unbiased=True):
     for ii in range(n_sigma):
         if unbiased:
             Z_yy = (1.0 / (N - 1))
-            # TIP this could be made more efficient by subtracting off const at end
+            # TIP this could be more efficient by subtracting off const at end
             kernel_val = tf.exp((1.0 / sigma_list[ii]) * exponent) - tf.eye(N)
         else:
             Z_yy = (1.0 / N)
@@ -137,6 +141,27 @@ def mmd2(X, Y, sigma_list, unbiased=True):
         (mmd2_fit(X, Y, sigma_list) + 
          mmd2_complexity(Y, sigma_list, unbiased=unbiased))
     return mmd2_
+
+
+def run_all_metrics(data_obs, data_latent, data_log_det_jac,
+                    gen_obs, gen_latent,
+                    sigma_list_obs, sigma_list_latent):
+    metrics = {}
+
+    metrics['nll_fit'] = nll_fit(data_latent)
+    metrics['nll_cmp'] = nll_complexity(data_latent, data_log_det_jac)
+
+    metrics['mmdm_fit'] = mmd_marg_fit(data_latent, sigma_list_latent)
+    metrics['mmdm_cmp'] = mmd_marg_complexity(data_latent, sigma_list_latent)
+
+    # This metric should be almost the same as mmd marg since mmd marg is just
+    # this metric after analytically marginalizing out gen_latent.
+    metrics['mmd2l_fit'] = mmd2_fit(gen_latent, data_latent, sigma_list_latent)
+    metrics['mmd2l_cmp'] = mmd2_complexity(data_latent, sigma_list_latent)
+
+    metrics['mmd2o_fit'] = mmd2_fit(data_obs, gen_obs, sigma_list_obs)
+    metrics['mmd2o_cmp'] = mmd2_complexity(gen_obs, sigma_list_obs)
+    return metrics
 
 # Testing
 
@@ -228,7 +253,8 @@ def run_tests(runs=100, n_sample=500):
 
         print err_curr
         err.append(err_curr)
-    print max(err)
+    print 'max log10 err: %f' % np.log10(max(err))
+    print 'tests done'
 
 if __name__ == '__main__':
     np.random.seed(6742345)
